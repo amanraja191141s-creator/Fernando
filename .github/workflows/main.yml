@@ -1,0 +1,104 @@
+name: SA Calculator v78 - Tool Options Rebuild Verify and Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sa-calculator-v78-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-package:
+    name: Verify v78 source, options, build and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Verify exact release identity and source provenance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node <<'NODE'
+          const fs=require('node:fs');
+          const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
+          const manifest=JSON.parse(fs.readFileSync('manifest.webmanifest','utf8'));
+          const readme=fs.readFileSync('README.md','utf8');
+          if(pkg.name!=='sa-calculator'||pkg.version!=='1.84.0-v78') throw new Error(`Unexpected package identity: ${pkg.name} ${pkg.version}`);
+          if(manifest.version!==pkg.version) throw new Error('PWA manifest version mismatch');
+          if(!readme.includes('SA-Calculator-v77-Independent-Premium-Rebuild.zip')) throw new Error('Independent v77 source provenance missing');
+          if(!/v98\.27–v98\.33 ZIPs were not used/.test(readme)) throw new Error('Latest v98 source exclusion statement missing');
+          console.log(`Verified ${pkg.name} ${pkg.version} and independent source provenance.`);
+          NODE
+
+      - name: Run all regression and tool-option tests
+        run: npm test
+
+      - name: Verify JavaScript syntax
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node --check assets/js/tool-options.js
+          node --check assets/js/app.js
+          node --check assets/js/premium-ui.js
+          node --check server.js
+          node --check service-worker.js
+          node --check scripts/build.js
+
+      - name: Build clean web release
+        run: npm run build
+
+      - name: Verify generated web bundle and required assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s dist/index.html
+          test -s dist/manifest.webmanifest
+          test -s dist/service-worker.js
+          test -s dist/assets/js/tool-options.js
+          test -s dist/assets/js/app.js
+          test -s dist/assets/js/premium-ui.js
+          test -s dist/assets/css/app.css
+          test -s dist/BUILD-INFO.txt
+          grep -q '1.84.0-v78' dist/index.html
+          grep -q 'tool-options.js' dist/service-worker.js
+          echo 'All v78 web runtime assets verified.'
+
+      - name: Package source archive
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          zip -qr SA-Calculator-v78-Source.zip . \
+            -x '.git/*' 'node_modules/*' 'dist/*' 'SA-Calculator-v78-Source.zip'
+          unzip -tq SA-Calculator-v78-Source.zip
+
+      - name: Upload web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: SA-Calculator-v78-Web-Build
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: SA-Calculator-v78-Source
+          path: SA-Calculator-v78-Source.zip
+          if-no-files-found: error
+          retention-days: 14
